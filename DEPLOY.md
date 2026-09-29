@@ -118,13 +118,17 @@ The first build takes several minutes. Wait until `backend` shows `healthy`, the
 Request the certificate:
 
 ```bash
-set -a; . ./.env; set +a
-docker compose run --rm --entrypoint certbot certbot certonly \
-  --webroot -w /var/www/certbot \
-  -d "$DOMAIN" --email "$CERTBOT_EMAIL" --agree-tos --no-eff-email
+( set -a; . ./.env; set +a
+  docker compose run --rm --entrypoint certbot certbot certonly \
+    --webroot -w /var/www/certbot \
+    -d "$DOMAIN" --email "$CERTBOT_EMAIL" --agree-tos --no-eff-email )
 ```
 
 It should end with `Successfully received certificate`.
+
+The parentheses matter: they load `.env` only for that one command. Without them the values
+stay set in your terminal, and docker compose gives terminal values priority over `.env` -
+so the next step's edit to `.env` would be silently ignored.
 
 ## 7. Switch to HTTPS
 
@@ -196,8 +200,7 @@ docker compose restart backend
 **Change ticket prices, seats or sale dates** (there is no admin screen - it's SQL):
 
 ```bash
-set -a; . ./.env; set +a
-docker compose exec postgres psql -U "$DB_USER" -d "$DB_NAME"
+( set -a; . ./.env; set +a; docker compose exec postgres psql -U "$DB_USER" -d "$DB_NAME" )
 ```
 
 Prices are in **paise** (₹599 = `59900`); always write dates with `+05:30`. Wrap changes in
@@ -207,7 +210,7 @@ Prices are in **paise** (₹599 = `59900`); always write dates with `+05:30`. Wr
 
 ```bash
 mkdir -p backups
-docker compose exec -T postgres pg_dump -U "$DB_USER" -d "$DB_NAME" | gzip > backups/otg-$(date +%F).sql.gz
+( set -a; . ./.env; set +a; docker compose exec -T postgres pg_dump -U "$DB_USER" -d "$DB_NAME" ) | gzip > backups/otg-$(date +%F).sql.gz
 ```
 
 Nightly at 03:00, keeping 14 days (`crontab -e`):
@@ -234,5 +237,6 @@ A backup on the same server doesn't survive losing the server - also copy `backu
 | Site loads but login/API calls fail | `CORS_ALLOWED_ORIGINS` must exactly match the address in the browser |
 | certbot: "Timeout during connect" | DNS not pointing at the Elastic IP yet, or port 80 closed in the security group |
 | nginx won't start after switching to https | The certificate wasn't issued - go back to `NGINX_MODE=http` and redo step 6 |
+| An edit to `.env` has no effect after `docker compose up -d` | Old values are still set in your terminal (from an earlier `set -a`). Run `unset $(grep -oE '^[A-Z_]+' .env)`, or log out and back in, then `docker compose up -d` again |
 | Scanner camera doesn't open on phones | The site must be opened over `https://` |
 | Build killed / out of memory | The swap from step 3 is missing, or the instance is under 2 GB |
