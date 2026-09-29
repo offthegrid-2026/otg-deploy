@@ -13,7 +13,10 @@ services:
     image: postgres:17-alpine
     restart: unless-stopped
     ports:
-      - "127.0.0.1:5432:5432"
+      # Reachable from this machine only (127.0.0.1), never the internet - lets DBeaver
+      # connect through an SSH tunnel. DB_LOCAL_PORT lets a dev PC that already runs its own
+      # Postgres on 5432 use another port.
+      - "127.0.0.1:${DB_LOCAL_PORT:-5432}:5432"
     environment:
       POSTGRES_DB: ${DB_NAME:-otg}
       POSTGRES_USER: ${DB_USER}
