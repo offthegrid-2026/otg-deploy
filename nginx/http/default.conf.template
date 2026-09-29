@@ -1,0 +1,15 @@
+# Plain HTTP. Used for local testing, and for the very first boot on the server - before
+# the HTTPS certificate exists, nginx can't start with the https config.
+
+server {
+    listen 80;
+    server_name _;
+    root /usr/share/nginx/html;
+
+    # Let's Encrypt fetches a token from here to prove we control the domain.
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
+
+    include /etc/nginx/snippets/app.conf;
+}

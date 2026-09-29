@@ -1,0 +1,104 @@
+# OTG production stack. Expects this folder next to the two app repos:
+#
+#   OTG/
+#   ├── otg-backend/    (git clone, branch rephrase)
+#   ├── frontend/       (git clone, branch rephrase)
+#   └── otg-deploy/     (this folder, with its .env)
+#
+# Everything is configured from .env — copy .env.example and fill it in. See DEPLOY.md.
+
+services:
+
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DB_NAME:-otg}
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      # Every user, payment and ticket lives here. Never delete this volume.
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    mem_limit: ${POSTGRES_MEM:-384m}
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+    # --appendonly: persist to disk. Redis holds the logout blocklist, so losing it on a
+    # restart would make every logged-out token valid again until it expires.
+    command: ["sh", "-c", "exec redis-server --requirepass \"$$REDIS_PASSWORD\" --appendonly yes"]
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" --no-auth-warning ping | grep -q PONG"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    mem_limit: ${REDIS_MEM:-128m}
+
+  backend:
+    build: ../otg-backend
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      SPRING_PROFILES_ACTIVE: prod
+      DB_HOST: postgres
+      REDIS_HOST: redis
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fs http://localhost:8080/actuator/health | grep -q UP"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 120s
+    mem_limit: ${BACKEND_MEM:-768m}
+
+  nginx:
+    build: ../frontend
+    restart: unless-stopped
+    ports:
+      - "${HTTP_PORT:-80}:80"
+      - "${HTTPS_PORT:-443}:443"
+    environment:
+      DOMAIN: ${DOMAIN:-localhost}
+    volumes:
+      # NGINX_MODE picks the config: "http" for local testing and the very first boot on
+      # the server, "https" once the certificate exists.
+      - ./nginx/${NGINX_MODE:-http}:/etc/nginx/templates:ro
+      - ./nginx/snippets:/etc/nginx/snippets:ro
+      - certbot-www:/var/www/certbot:ro
+      - letsencrypt:/etc/letsencrypt:ro
+    # Reload every 6h so a certificate renewed by certbot is picked up without a restart.
+    # (Runs the image's own entrypoint afterwards, which fills in the config templates.)
+    entrypoint: ["/bin/sh", "-c", "(while :; do sleep 6h; nginx -s reload; done) & exec /docker-entrypoint.sh nginx -g 'daemon off;'"]
+    depends_on:
+      backend:
+        condition: service_healthy
+    mem_limit: ${NGINX_MEM:-64m}
+
+  # Renews the HTTPS certificate. Only runs when COMPOSE_PROFILES=https (see DEPLOY.md).
+  certbot:
+    image: certbot/certbot
+    restart: unless-stopped
+    profiles: ["https"]
+    volumes:
+      - certbot-www:/var/www/certbot
+      - letsencrypt:/etc/letsencrypt
+    entrypoint: ["/bin/sh", "-c", "trap exit TERM; while :; do certbot renew --webroot -w /var/www/certbot --quiet; sleep 12h & wait $${!}; done"]
+
+volumes:
+  pgdata:
+  redisdata:
+  certbot-www:
+  letsencrypt:

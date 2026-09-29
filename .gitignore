@@ -1,0 +1,3 @@
+# Real secrets. Only .env.example belongs in git.
+.env
+backups/
